@@ -1,0 +1,21 @@
+# Generated pattern images (timestamped output directories)
+20*-*-*-*-*/
+
+# Test output
+_test_output/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Claude configuration (local settings, not shared)
+.claude/
+
+# Superpowers skill artifacts
+.superpowers/
