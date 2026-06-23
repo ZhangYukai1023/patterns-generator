@@ -114,3 +114,46 @@ def generate_star(size: int, hp: int, dense: bool = True) -> np.ndarray:
         arr[:, :] = np.array(img, dtype=np.uint8)
 
     return arr
+
+
+# ---- Diamond Grid (菱形网格) ---- #
+
+
+def generate_diamond_grid(size: int, hp: int, dense: bool = True) -> np.ndarray:
+    """Generate diamond grid pattern.
+
+    Dense: periodic diamond shapes tiled across the canvas.
+    Isolated: single diamond shape centered.
+
+    A diamond is a rotated square. Its extent from leftmost to rightmost
+    vertex is hp (diameter = hp). Cell: 2*hp × 2*hp, diamond centered.
+
+    Args:
+        size: Image size.
+        hp: Diamond diameter (full width/height of the diamond).
+        dense: True for grid, False for single.
+
+    Returns:
+        uint8 numpy array with values 0 or 255.
+    """
+    arr = np.zeros((size, size), dtype=np.uint8)
+
+    if dense:
+        cell_size = 2 * hp
+        cell = np.zeros((cell_size, cell_size), dtype=np.uint8)
+        cx, cy = hp - 0.5, hp - 0.5
+        radius = hp / 2.0
+        Y, X = np.ogrid[:cell_size, :cell_size]
+        mask = np.abs(X - cx) + np.abs(Y - cy) <= radius
+        cell[mask] = 255
+        tiles_y = (size + cell_size - 1) // cell_size
+        tiles_x = (size + cell_size - 1) // cell_size
+        arr = np.tile(cell, (tiles_y, tiles_x))[:size, :size]
+    else:
+        center = size // 2
+        radius = hp / 2.0
+        Y, X = np.ogrid[:size, :size]
+        mask = np.abs(X - center + 0.5) + np.abs(Y - center + 0.5) <= radius
+        arr[mask] = 255
+
+    return arr

@@ -8,6 +8,7 @@ Output directory is a timestamped folder parallel to this file.
 
 import math
 import os
+from dataclasses import dataclass
 
 from PIL import Image
 
@@ -22,58 +23,22 @@ from utils import (
 )
 from patterns.line_space import generate_line_space
 from patterns.contact_hole import generate_contact_hole_square, generate_contact_hole_circle
-from patterns.others import generate_zigzag, generate_star
+from patterns.others import generate_zigzag, generate_star, generate_diamond_grid
 
 
-# Pattern registry entry: (folder, dense_label, prefix, subtype, size, angle, has_rotation, gen_fn)
-PATTERNS = []
+@dataclass
+class Pattern:
+    folder: str
+    dense_label: str
+    prefix: str
+    subtype: str
+    size: int
+    angle: float
+    has_rotation: bool
+    gen_fn: callable
 
 
-def _register_patterns():
-    """Build pattern registry from config."""
-    hp_values = list(range(config.HP_MIN, config.HP_MAX + 1, config.HP_STEP))
-
-    PATTERNS.clear()
-
-    # --- Line Space ---
-    for dense_label, size in _get_sizes():
-        for angle in config.LINE_SPACE_ANGLES:
-            PATTERNS.append((
-                "line_space", dense_label, "LS", "line",
-                size, angle, True, generate_line_space,
-            ))
-
-    # --- Contact Hole Square ---
-    for dense_label, size in _get_sizes():
-        for angle in config.CONTACT_HOLE_SQUARE_ANGLES:
-            PATTERNS.append((
-                "contact_hole", dense_label, "CH", "square",
-                size, angle, True, generate_contact_hole_square,
-            ))
-
-    # --- Contact Hole Circle (no rotation) ---
-    for dense_label, size in _get_sizes():
-        PATTERNS.append((
-            "contact_hole", dense_label, "CH", "circle",
-            size, 0.0, False, generate_contact_hole_circle,
-        ))
-
-    # --- Others - Zigzag ---
-    for dense_label, size in _get_sizes():
-        for angle in config.OTHERS_ANGLES:
-            PATTERNS.append((
-                "others", dense_label, "OT", "zigzag",
-                size, angle, True, generate_zigzag,
-            ))
-
-    # --- Others - Star ---
-    for dense_label, size in _get_sizes():
-        for angle in config.OTHERS_ANGLES:
-            PATTERNS.append((
-                "others", dense_label, "OT", "star",
-                size, angle, True, generate_star,
-            ))
-
+PATTERNS: list[Pattern] = []
 
 
 def _get_sizes():
@@ -82,6 +47,49 @@ def _get_sizes():
         yield ("dense", config.DENSE_SIZE)
     if config.GENERATE_ISOLATED:
         yield ("isolated", config.ISOLATED_SIZE)
+
+
+_SIZES_CACHE = None
+def _cached_sizes():
+    global _SIZES_CACHE
+    if _SIZES_CACHE is None:
+        _SIZES_CACHE = list(_get_sizes())
+    return _SIZES_CACHE
+
+
+def _register_patterns():
+    """Build pattern registry from config."""
+    PATTERNS.clear()
+    sizes = _cached_sizes()
+
+    for dense_label, size in sizes:
+        for angle in config.LINE_SPACE_ANGLES:
+            PATTERNS.append(Pattern("line_space", dense_label, "LS", "line",
+                                    size, angle, True, generate_line_space))
+
+    for dense_label, size in sizes:
+        for angle in config.CONTACT_HOLE_SQUARE_ANGLES:
+            PATTERNS.append(Pattern("contact_hole", dense_label, "CH", "square",
+                                    size, angle, True, generate_contact_hole_square))
+
+    for dense_label, size in sizes:
+        PATTERNS.append(Pattern("contact_hole", dense_label, "CH", "circle",
+                                size, 0.0, False, generate_contact_hole_circle))
+
+    for dense_label, size in sizes:
+        for angle in config.OTHERS_ANGLES:
+            PATTERNS.append(Pattern("others", dense_label, "OT", "zigzag",
+                                    size, angle, True, generate_zigzag))
+
+    for dense_label, size in sizes:
+        for angle in config.OTHERS_ANGLES:
+            PATTERNS.append(Pattern("others", dense_label, "OT", "star",
+                                    size, angle, True, generate_star))
+
+    for dense_label, size in sizes:
+        for angle in config.OTHERS_ANGLES:
+            PATTERNS.append(Pattern("others", dense_label, "OT", "diamond",
+                                    size, angle, True, generate_diamond_grid))
 
 
 def _build_filename(prefix: str, subtype: str, hp: int, angle: float, has_rotation: bool) -> str:
@@ -100,6 +108,13 @@ def _expanded_size(size: int) -> int:
     return expanded
 
 
+def _rotate_and_crop(img: Image.Image, angle: float, target_size: int) -> Image.Image:
+    """Rotate with expand=True, then center-crop to target size."""
+    img = img.rotate(angle, resample=Image.BICUBIC, expand=True, fillcolor=0)
+    crop = (img.width - target_size) // 2
+    return img.crop((crop, crop, crop + target_size, crop + target_size))
+
+
 def generate_all(base_dir: str) -> None:
     """Generate all pattern images."""
     _register_patterns()
@@ -112,34 +127,29 @@ def generate_all(base_dir: str) -> None:
 
     print(f"Generating {total} images in: {output_root}")
 
-    for folder, dense_label, prefix, subtype, size, angle, has_rotation, gen_fn in PATTERNS:
+    for p in PATTERNS:
         for hp in hp_values:
-            subdir = ensure_subdir(os.path.join(output_root, folder, dense_label))
-            filename = _build_filename(prefix, subtype, hp, angle, has_rotation)
+            subdir = ensure_subdir(os.path.join(output_root, p.folder, p.dense_label))
+            filename = _build_filename(p.prefix, p.subtype, hp, p.angle, p.has_rotation)
             filepath = os.path.join(subdir, filename)
 
             if os.path.exists(filepath):
                 skipped += 1
                 continue
 
-            # For rotated dense patterns: use expanded canvas so the rotated
-            # result fills the entire output image with no empty corners.
-            canvas_size = size
-            if has_rotation and angle != 0 and dense_label == "dense":
-                canvas_size = _expanded_size(size)
+            canvas_size = p.size
+            needs_expanded = p.has_rotation and p.angle != 0 and p.dense_label == "dense"
+            if needs_expanded:
+                canvas_size = _expanded_size(p.size)
 
-            arr = gen_fn(canvas_size, hp, dense=(dense_label == "dense"))
+            arr = p.gen_fn(canvas_size, hp, dense=(p.dense_label == "dense"))
             img = numpy_to_pil(arr)
 
-            if has_rotation and angle != 0:
-                if canvas_size != size:
-                    # Rotate with expand=True to capture full rotated content,
-                    # then center-crop to target size so pattern fills the image.
-                    img = img.rotate(angle, resample=Image.BICUBIC, expand=True, fillcolor=0)
-                    crop = (img.width - size) // 2
-                    img = img.crop((crop, crop, crop + size, crop + size))
+            if p.has_rotation and p.angle != 0:
+                if needs_expanded:
+                    img = _rotate_and_crop(img, p.angle, p.size)
                 else:
-                    img = rotate_image(img, angle)
+                    img = rotate_image(img, p.angle)
 
             save_image(img, filepath)
             count += 1
